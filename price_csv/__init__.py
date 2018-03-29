@@ -4,35 +4,194 @@ import os
 import json
 import requests
 from io import StringIO
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
+from collections import UserList, UserDict
 
 EXPORT_KEYS = ['sku', 'desc', 'vend', 'dept', 'cash', 'trade', 'price', 'tax', 'id', 'new-price']  # Final output
 STRIP_REGEX = re.compile(r'[ -_$!.]')  # Strip special characters
 
 
-class GameConsole(object):
-    def __init__(self, console_name: str, current: list, price_charting: list):
-        """
-        Collection of games in a console that attempts to match with price charting
-        :param console_name: Console Name
-        :param current: List of current items
-        :param price_charting: List of price charting items
-        """
-        self.name = console_name
-        self.price_charting = None
-        self.current = None
-        self.with_ids = None
-        self.without_ids = None
-        self.parse_list(current, price_charting)
+class InventoryItem(UserDict):
+    def __init__(self, item_dict: dict):
+        super(InventoryItem, self).__init__()
+        self.data = item_dict
 
-    def parse_list(self, cur, pc):
-        self.price_charting = [x for x in pc if str.lower(x['console-name']) == self.name.lower()]
-        self.current = [x for x in cur if str.lower(x['dept']) == self.name.lower()]
+    @property
+    def sku(self):
+        return self.data['sku']
+
+    @property
+    def dept(self):
+        return self.data['dept']
+
+    @property
+    def name(self):
+        return self.data['desc']
+
+    @property
+    def cash(self):
+        return self.data['cash']
+
+    @property
+    def trade(self):
+        return self.data['trade']
+
+    @property
+    def price(self):
+        return self.data['price']
+
+    def __repr__(self):
+        return '<InventoryItem: {} @ ${}>'.format(self.name, self.price)
+
+
+class GamestopItem(UserDict):
+    def __init__(self, item_dict: dict):
+        super(GamestopItem, self).__init__()
+        self.data = item_dict
+
+    @property
+    def name(self):
+        return self.data['product-name']
+
+    @property
+    def price(self):
+        return money_to_float(self.data['gamestop-price'])
+
+    @property
+    def trade_price(self):
+        return money_to_float(self.data['gamestop-trade-price'])
+
+    @property
+    def id(self):
+        return self.data['id']
+
+    def __repr__(self):
+        return '<GamestopItem: {} @ ${}>'.format(self.name, self.price)
+
+
+class PriceChartingItem(UserDict):
+    def __init__(self, item_dict: Dict):
+        super(PriceChartingItem, self).__init__()
+        self.data = item_dict
+
+    @property
+    def console(self):
+        return self.data['console-name']
+
+    @property
+    def name(self):
+        return self.data['product-name']
+
+    @property
+    def loose_price(self):
+        return money_to_float(self.data['loose-price'])
+
+    @property
+    def complete_price(self):
+        return money_to_float(self.data['cib-price'])
+
+    def __repr__(self):
+        return '<PriceChartingItem: {} @ ${}>'.format(self.name, self.complete_price)
+
+
+class ItemCollection(UserList):
+    def __init__(self, item_type: type,
+                 url: Optional[str] = None, csv_list: List = None,
+                 csv_file: Optional[str] = None):
+        """
+        Base class for Collection items
+        :param item_type: The kind of item to be pushed to
+        :param url: Grab data from URL
+        :param csv_list: Use a pre made dictionary list
+        :param csv_file: Use a file object
+        """
+        super(ItemCollection, self).__init__()
+        if csv_file:
+            p_file = open(csv_file, 'r', newline='')
+            p_reader = csv.DictReader(p_file)
+            self.data = [item_type(x) for x in p_reader]
+        if csv_list:
+            self.data = [item_type(x) for x in csv_list]
+        if url:
+            r = requests.get(url)
+            file_buffer = StringIO(r.content.decode('utf-8'))
+            p_reader = csv.DictReader(file_buffer)
+            self.data = [item_type(x) for x in p_reader]
+
+
+class PriceChartingCollection(ItemCollection):
+    def __init__(self, url: Optional[str] = None, csv_list: List = None, csv_file: Optional[str] = None):
+        super().__init__(PriceChartingItem, url, csv_list, csv_file)
+ 
+    def __repr__(self):
+        return '<PriceChartingCollection>'
+
+
+class InventoryCollection(ItemCollection):
+    def __init__(self, url: Optional[str] = None, csv_list: List = None, csv_file: Optional[str] = None):
+        super().__init__(InventoryItem, url, csv_list, csv_file)
+
+    def __repr__(self):
+        return '<InventoryCollection>'
+
+
+class GamestopCollection(ItemCollection):
+    def __init__(self, url: Optional[str] = None, csv_list: List = None, csv_file: Optional[str] = None):
+        super().__init__(InventoryItem, url, csv_list, csv_file)
+
+    def __repr__(self):
+        return '<GamestopCollection>'
+
+
+class MatchingItems(object):
+    def __init__(self, inventory_item : InventoryItem, other: Union[GamestopItem, PriceChartingItem]):
+        self.inventory_item = inventory_item
+        self.other = other
+
+    @property
+    def shorter_name(self):
+        """
+        Finds the item with the shorter name
+        :return: string
+        """
+        if len(self.inventory_item.name) < len(self.other.name):
+            return self.inventory_item.name
+        else:
+            return self.other.name
+
+
+class GameCompare(object):
+    def __init__(self, current: InventoryCollection, other: Union[PriceChartingCollection, GamestopCollection],
+                 curkey: str, otherkey: str, matchvalue: Union[bool, str] = True):
+        """
+        Object that's the basis of GameConsole
+        """
+        self.current = current
+        self.other = other
+        self.without_ids = None
+        self.with_ids = None
+        self.parse(self.current, self.other, curkey, otherkey, matchvalue)
+
+    def parse(self, cur: InventoryCollection, other: Union[GamestopCollection, PriceChartingCollection],
+                   curkey: str, otherkey: str, matchvalue: Union[bool, str] = True) -> None:
+        """
+        Parse the collections passed
+        :param cur: Current inventory list
+        :param other: Inventory list to compare
+        :param curkey: key to compare on the current list
+        :param otherkey: key to compare on the other list
+        :param matchvalue: String to match with the keys
+        :return: None
+        """
+        if type(matchvalue) == str:
+            matchvalue = matchvalue.lower()
+        self.current = [x for x in cur.data if str.lower(x[curkey]) == matchvalue]
+        self.other = [x for x in other.data if str.lower(x[otherkey]) == matchvalue]
 
     def get_ids(self, reg=STRIP_REGEX):
-        self.with_ids = self.current
+        self.with_ids = self.current.data
         for i in self.with_ids:
-            for k in self.price_charting:
+            for k in self.other.data:
                 if reg.sub('', k['product-name'].lower()) in reg.sub('', i['desc'].lower()):
                     i['id'] = k['id']
         self.without_ids = [x for x in self.with_ids if 'id' not in x.keys()]
@@ -50,101 +209,14 @@ class GameConsole(object):
             writer.writeheader()
             writer.writerows(self.without_ids)
 
+
+class GameConsole(GameCompare):
+    def __init__(self, current: InventoryCollection, other: Union[PriceChartingCollection, GamestopCollection],
+                 ):
+        super(GameConsole, self).__init__(current, other, )
+
     def __repr__(self):
         return '<Console: {}>'.format(self.name)
-
-
-class PriceChartingItem(object):
-    def __init__(self, item_dict: Dict):
-        self.item_dict = item_dict
-
-    @property
-    def console(self):
-        return self.item_dict['console-name']
-
-    @property
-    def product(self):
-        return self.item_dict['product-name']
-
-    @property
-    def loose_price(self):
-        return money_to_float(self.item_dict['loose-price'])
-
-    @property
-    def complete_price(self):
-        return money_to_float(self.item_dict['cib-price'])
-
-
-class PriceChartingCollection(object):
-    def __init__(self, url: Optional[str] = None, csv_list: Optional[List[PriceChartingItem]] = None,
-                 csv_file: Optional[str] = None):
-        """
-        A collection of items that are received from price charting
-        :param url: Grab data from URL
-        :param csv_list: Use a pre made dictionary list
-        :param csv_file: Use a file object
-        """
-        if csv_file:
-            p_file = open(csv_file, 'r', newline='')
-            p_reader = csv.DictReader(p_file)
-            self.items = [PriceChartingItem(x) for x in p_reader]
-        if csv_list:
-            self.items = [PriceChartingItem(x) for x in csv_list]
-        if url:
-            r = requests.get(url)
-            file_buffer = StringIO(r.content.decode('utf-8'))
-            p_reader = csv.DictReader(file_buffer)
-            self.items = [PriceChartingItem(x) for x in p_reader]
- 
-    def __repr__(self):
-        return '<PriceChartingCollection>'
-
-
-class GamestopItem(object):
-    def __init__(self, item_dict: dict):
-        self.item_dict = item_dict
-
-
-class InventoryCollection(object):
-    def __init__(self, csv_list: list = None, csv_file: str = None):
-        if csv_file:
-            i_file = open(csv_file, 'r', newline='')
-            i_reader = csv.DictReader(i_file)
-            self.items = [InventoryItem(x) for x in i_reader]
-        if csv_list:
-            self.items = [InventoryItem(x) for x in csv_list]
-
-
-class InventoryItem(object):
-    def __init__(self, item_dict: dict):
-        self.item_dict = item_dict
-
-    @property
-    def sku(self):
-        return self.item_dict['sku']
-
-    @property
-    def dept(self):
-        return self.item_dict['dept']
-    
-    @property
-    def desc(self):
-        return self.item_dict['desc']
-
-    @property
-    def cash(self):
-        return self.item_dict['cash']
-
-    @property
-    def trade(self):
-        return self.item_dict['trade']
-
-    @property
-    def price(self):
-        return self.item_dict['price']
-
-    def __repr__(self):
-        return '<InventoryItem: {} @ ${}>'.format(self.desc, self.price)
 
 
 def get_consoles_price_charting(plist):
@@ -155,8 +227,11 @@ def get_consoles_price_charting(plist):
     return output
 
 
-def money_to_float(money_string: str) -> float:
-    return float(STRIP_REGEX.sub('', money_string))
+def money_to_float(money_string: str) -> Optional[float]:
+    try:
+        return float(re.sub('[$ ]', '', money_string))
+    except ValueError:
+        return None
 
 
 def get_consoles_cur(clist: list):
