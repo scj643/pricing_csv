@@ -144,7 +144,7 @@ class GamestopCollection(ItemCollection):
 
 
 class MatchingItems(object):
-    def __init__(self, inventory_item : InventoryItem, other: Union[GamestopItem, PriceChartingItem]):
+    def __init__(self, inventory_item: InventoryItem, other: Union[GamestopItem, PriceChartingItem]):
         self.inventory_item = inventory_item
         self.other = other
 
@@ -170,10 +170,11 @@ class GameCompare(object):
         self.other = other
         self.without_ids = None
         self.with_ids = None
+        self.matches = []
         self.parse(self.current, self.other, curkey, otherkey, matchvalue)
 
     def parse(self, cur: InventoryCollection, other: Union[GamestopCollection, PriceChartingCollection],
-                   curkey: str, otherkey: str, matchvalue: Union[bool, str] = True) -> None:
+              curkey: str, otherkey: str, matchvalue: Union[bool, str] = True) -> None:
         """
         Parse the collections passed
         :param cur: Current inventory list
@@ -185,15 +186,17 @@ class GameCompare(object):
         """
         if type(matchvalue) == str:
             matchvalue = matchvalue.lower()
-        self.current = [x for x in cur.data if str.lower(x[curkey]) == matchvalue]
-        self.other = [x for x in other.data if str.lower(x[otherkey]) == matchvalue]
+        self.current = [x for x in cur if str.lower(x[curkey]) == matchvalue]
+        self.other = [x for x in other if str.lower(x[otherkey]) == matchvalue]
 
     def get_ids(self, reg=STRIP_REGEX):
-        self.with_ids = self.current.data
+        self.with_ids = self.current
         for i in self.with_ids:
-            for k in self.other.data:
-                if reg.sub('', k['product-name'].lower()) in reg.sub('', i['desc'].lower()):
+            for k in self.other:
+                if reg.sub('', k.name.lower()) in reg.sub('', i.name.lower()):
+                    print(i)
                     i['id'] = k['id']
+                    self.matches += [MatchingItems(i, k)]
         self.without_ids = [x for x in self.with_ids if 'id' not in x.keys()]
         self.with_ids = [x for x in self.with_ids if 'id' in x.keys()]
 
@@ -211,9 +214,9 @@ class GameCompare(object):
 
 
 class GameConsole(GameCompare):
-    def __init__(self, current: InventoryCollection, other: Union[PriceChartingCollection, GamestopCollection],
-                 ):
-        super(GameConsole, self).__init__(current, other, )
+    def __init__(self, current: InventoryCollection, other: PriceChartingCollection, name: str):
+        self.name = name
+        super(GameConsole, self).__init__(current, other, 'dept', 'console-name', name)
 
     def __repr__(self):
         return '<Console: {}>'.format(self.name)
