@@ -8,7 +8,8 @@ from typing import Optional, List, Dict, Union
 from collections import UserList, UserDict
 
 EXPORT_KEYS = ['sku', 'desc', 'vend', 'dept', 'cash', 'trade', 'price', 'tax', 'id', 'new-price']  # Final output
-STRIP_REGEX = re.compile(r'[ -_$!.]')  # Strip special characters
+STRIP_REGEX = re.compile(r'[ _$!.]')  # Strip special characters
+STRIP_DASH_REGEX = re.compile(r'[ _$!.][^-]*$')
 
 
 class InventoryItem(UserDict):
@@ -147,7 +148,10 @@ class MatchingItems(object):
     def __init__(self, inventory_item: InventoryItem, other: Union[GamestopItem, PriceChartingItem]):
         self.inventory_item = inventory_item
         self.other = other
+        self.matches = []
+        self.matches += [self.other]
 
+    # TODO add way to match multiple items using the length to determine how close they are
     @property
     def shorter_name(self):
         """
@@ -158,6 +162,9 @@ class MatchingItems(object):
             return self.inventory_item.name
         else:
             return self.other.name
+
+    def __repr__(self):
+        return '<MatchingItems {}>'.format(self.shorter_name)
 
 
 class GameCompare(object):
@@ -193,8 +200,8 @@ class GameCompare(object):
         self.with_ids = self.current
         for i in self.with_ids:
             for k in self.other:
-                if reg.sub('', k.name.lower()) in reg.sub('', i.name.lower()):
-                    print(i)
+                if reg.sub('',  k.name.lower()) in reg.sub('', i.name.lower()):
+                    print(reg.sub('',  k.name.lower()))
                     i['id'] = k['id']
                     self.matches += [MatchingItems(i, k)]
         self.without_ids = [x for x in self.with_ids if 'id' not in x.keys()]
